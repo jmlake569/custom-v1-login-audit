@@ -6,6 +6,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
+from time import sleep
+from requests.exceptions import RequestException
 
 # Setup Colors
 GREEN = '\033[92m'
@@ -29,20 +31,37 @@ iam_url_path = '/v3.0/iam/accounts'
 audit_logs_url_path = '/v3.0/audit/logs'
 headers = {'Authorization': 'Bearer ' + args.token, 'Content-Type': 'application/json'}
 
+def make_request_with_retry(url, headers, params=None, max_retries=3, timeout=30):
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=timeout)
+            response.raise_for_status()
+            return response
+        except RequestException as e:
+            if attempt == max_retries - 1:
+                raise
+            wait_time = (2 ** attempt) + 1  # exponential backoff
+            logger.warning(f"Request failed, retrying in {wait_time} seconds... Error: {str(e)}")
+            sleep(wait_time)
+
 # Fetch IAM Accounts
 def get_iam_accounts():
     accounts = []
-    next_url = f"{url_base}{iam_url_path}?top=100"
+    next_url = f"{url_base}{iam_url_path}?top=50"
     print(f"{GREEN}Fetching IAM accounts...{RESET}", end="")
 
     while next_url:
-        response = requests.get(next_url, headers=headers)
-        if response.status_code == 200:
+        try:
+            response = make_request_with_retry(next_url, headers)
             response_json = response.json()
             accounts.extend(response_json.get('items', []))
             next_url = response_json.get('nextLink') or response_json.get('@odata.nextLink')
-        else:
-            logger.error(f"Error fetching IAM accounts: {response.status_code} - {response.text}")
+            
+            if next_url:
+                sleep(0.5)
+                
+        except Exception as e:
+            logger.error(f"Error fetching IAM accounts: {str(e)}")
             print(f"{RED}Error fetching IAM accounts. Check error.log{RESET}")
             sys.exit(1)
 
@@ -52,14 +71,14 @@ def get_iam_accounts():
 # Fetch Audit Logs and Extract Last Login
 def get_last_logins():
     audit_logs = {}
-    params = {'limit': 100}
+    params = {'limit': 50}
     next_url = f"{url_base}{audit_logs_url_path}"
     print(f"{GREEN}Fetching audit logs...{RESET}", end="")
     total_logs = 0
 
     while next_url:
-        response = requests.get(next_url, headers=headers, params=params)
-        if response.status_code == 200:
+        try:
+            response = make_request_with_retry(next_url, headers, params=params)
             response_json = response.json()
             for log in response_json.get('items', []):
                 details = log.get('details', {})
@@ -85,8 +104,12 @@ def get_last_logins():
 
             total_logs += len(response_json.get('items', []))
             next_url = response_json.get('nextLink')
-        else:
-            logger.error(f"Error fetching audit logs: {response.status_code} - {response.text}")
+            
+            if next_url:
+                sleep(0.5)
+                
+        except Exception as e:
+            logger.error(f"Error fetching audit logs: {str(e)}")
             print(f"{RED}Error fetching audit logs. Check error.log{RESET}")
             break
 

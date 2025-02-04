@@ -31,7 +31,12 @@ iam_url_path = '/v3.0/iam/accounts'
 audit_logs_url_path = '/v3.0/audit/logs'
 headers = {'Authorization': 'Bearer ' + args.token, 'Content-Type': 'application/json'}
 
-def make_request_with_retry(url, headers, params=None, max_retries=3, timeout=30):
+# Request Configuration
+REQUEST_TIMEOUT = 30  # seconds
+PAGINATION_DELAY = 2  # seconds between pagination requests
+RETRY_DELAY_BASE = 3  # base seconds for exponential backoff
+
+def make_request_with_retry(url, headers, params=None, max_retries=3, timeout=REQUEST_TIMEOUT):
     for attempt in range(max_retries):
         try:
             response = requests.get(url, headers=headers, params=params, timeout=timeout)
@@ -40,7 +45,7 @@ def make_request_with_retry(url, headers, params=None, max_retries=3, timeout=30
         except RequestException as e:
             if attempt == max_retries - 1:
                 raise
-            wait_time = (2 ** attempt) + 1  # exponential backoff
+            wait_time = (RETRY_DELAY_BASE ** attempt) + 1  # exponential backoff
             logger.warning(f"Request failed, retrying in {wait_time} seconds... Error: {str(e)}")
             sleep(wait_time)
 
@@ -58,14 +63,15 @@ def get_iam_accounts():
             next_url = response_json.get('nextLink') or response_json.get('@odata.nextLink')
             
             if next_url:
-                sleep(0.5)
+                print(f"\n{YELLOW}Waiting {PAGINATION_DELAY} seconds before next request...{RESET}", end="")
+                sleep(PAGINATION_DELAY)
                 
         except Exception as e:
             logger.error(f"Error fetching IAM accounts: {str(e)}")
             print(f"{RED}Error fetching IAM accounts. Check error.log{RESET}")
             sys.exit(1)
 
-    print(f" {YELLOW}Total IAM accounts retrieved: {len(accounts)}{RESET}")
+    print(f"\n{YELLOW}Total IAM accounts retrieved: {len(accounts)}{RESET}")
     return [{'UserId': a.get('email', 'Unknown'), 'RoleName': a.get('role', 'Unknown'), 'ID': a.get('id')} for a in accounts]
 
 # Fetch Audit Logs and Extract Last Login
